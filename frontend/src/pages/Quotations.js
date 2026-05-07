@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 
-import Card from "../components/ui/Card";
+
 import Button from "../components/ui/Button";
 import Input from "../components/ui/Input";
 import Select from "../components/ui/Select";
-import PageHeader from "../components/ui/PageHeader";
+
 
 import exportQuotationExcel from "../utils/exportExcel";
 import exportQuotationPDF from "../utils/exportPDF";
@@ -34,9 +34,6 @@ import { useParams } from "react-router-dom";
 
   const [pdfFormat, setPdfFormat] =
     useState("quotation");
-
-  const selectedClient =
-    clients.find(c => c.id == clientId) || {};
 
   const [pf, setPf] = useState("");
 
@@ -1088,9 +1085,9 @@ return (
                 netTotal,
                 {
                   name:
-                    clients.find(c => c.id == clientId)?.name || "",
+                    clients.find(c => c.id === clientId)?.name || "",
                   address:
-                    clients.find(c => c.id == clientId)?.address || ""
+                    clients.find(c => c.id === clientId)?.address || ""
                 }
               )
             }

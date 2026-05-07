@@ -25,8 +25,10 @@ const ClientDetails = () => {
   };
 
   useEffect(() => {
-    if (id) loadQuotations();
-  }, [id]);
+  if (id) {
+    loadQuotations();
+  }
+}, []);
 
   // ================= COPY =================
   const copyQuotation = async (quotationId) => {

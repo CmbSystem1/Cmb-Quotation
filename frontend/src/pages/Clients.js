@@ -53,17 +53,6 @@ const Clients = () => {
     setForm(c);
   };
 
-  const saveEdit = async () => {
-    await axios.put(
-      `https://quotation-backend-9i3u.onrender.com/api/clients/${editId}`,
-      form
-    );
-
-    setEditId(null);
-    setForm({ name: "", phone: "", address: "", gst: "" });
-    fetchClients();
-  };
-
   // ================= DELETE =================
   const deleteClient = async (id) => {
     if (!window.confirm("Delete this client?")) return;
