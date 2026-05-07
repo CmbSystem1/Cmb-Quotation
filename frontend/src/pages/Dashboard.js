@@ -22,7 +22,7 @@ const Dashboard = () => {
       try {
 
         const res = await axios.get(
-          "http://localhost:5000/api/all-quotations"
+          "https://quotation-backend-9i3u.onrender.com/api/all-quotations"
         );
 
         setQuotations(res.data || []);

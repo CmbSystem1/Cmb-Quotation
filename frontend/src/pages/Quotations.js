@@ -78,16 +78,16 @@ const { updateSections, undo, redo, onDragEnd } =
   const loadData = async () => {
     try {
       // ================= LOAD CLIENTS =================
-      const clientsRes = await axios.get("http://localhost:5000/api/clients");
+      const clientsRes = await axios.get("https://quotation-backend-9i3u.onrender.com/api/clients");
       setClients(Array.isArray(clientsRes.data) ? clientsRes.data : []);
 
       // ================= LOAD PRODUCTS =================
-      const productsRes = await axios.get("http://localhost:5000/api/all-products");
+      const productsRes = await axios.get("https://quotation-backend-9i3u.onrender.com/api/all-products");
       setAllProducts(Array.isArray(productsRes.data) ? productsRes.data : []);
 
       // ================= LOAD QUOTATION (EDIT MODE) =================
       if (id) {
-        const res = await axios.get("http://localhost:5000/api/quotation/" + id);
+        const res = await axios.get("https://quotation-backend-9i3u.onrender.com/api/quotation/" + id);
         const q = res.data;
         console.log("EDIT QUOTATION LOADED");
         console.log("FULL QUOTATION:", q);
@@ -211,7 +211,7 @@ q.items.forEach(item => {
       target.rate = Number(product.RATE) || 0;
 
       try {
-        const res = await axios.get("http://localhost:5000/api/get-image", {
+        const res = await axios.get("https://quotation-backend-9i3u.onrender.com/api/get-image", {
           params: { productCode: row.productCode, brand: row.brand }
         });
 
@@ -320,7 +320,7 @@ q.items.forEach(item => {
     formData.append("productCode", sections[s].subsections[sub].rows[r].productCode);
     formData.append("brand", sections[s].subsections[sub].rows[r].brand);
 
-    const res = await axios.post("http://localhost:5000/api/upload-image", formData);
+    const res = await axios.post("https://quotation-backend-9i3u.onrender.com/api/upload-image", formData);
 
     const newSections = [...sections];
     newSections[s].subsections[sub].rows[r].image = res.data.image;
@@ -410,7 +410,7 @@ console.log("FULL PAYLOAD:", {
 
        // ================= CREATE REVISION =================
   await axios.post(
-    "http://localhost:5000/api/quotation-revision/" + id,
+    "https://quotation-backend-9i3u.onrender.com/api/quotation-revision/" + id,
     {
       clientId,
       items,
@@ -428,7 +428,7 @@ console.log("FULL PAYLOAD:", {
     else {
 
       await axios.post(
-        "http://localhost:5000/api/quotations",
+        "https://quotation-backend-9i3u.onrender.com/api/quotations",
         {
           clientId,
           items,
@@ -878,7 +878,7 @@ return (
 {row.image ? (
 
   <img
-    src={`http://localhost:5000${row.image}`}
+    src={`https://quotation-backend-9i3u.onrender.com${row.image}`}
     alt=""
 
     onError={(e) => {

@@ -145,7 +145,7 @@ if (r.image && r.image !== "") {
   try {
     const imageUrl = r.image.startsWith("http")
       ? r.image
-      : `http://localhost:5000${r.image}`;
+      : `https://quotation-backend-9i3u.onrender.com${r.image}`;
 
     console.log("Excel Image URL:", imageUrl);
 

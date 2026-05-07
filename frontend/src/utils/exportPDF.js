@@ -479,7 +479,7 @@ for (let i = 0; i < (sub.rows || []).length; i++) {
 
         const url = r.image.startsWith("http")
           ? r.image
-          : `http://localhost:5000${r.image}`;
+          : `https://quotation-backend-9i3u.onrender.com${r.image}`;
 
         const base64 = await getBase64FromUrl(url);
 

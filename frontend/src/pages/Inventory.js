@@ -25,7 +25,7 @@ const Inventory = () => {
       setLoading(true);
 
       const res = await axios.get(
-        "http://localhost:5000/api/excel-product",
+        "https://quotation-backend-9i3u.onrender.com/api/excel-product",
         {
           params: {
             productCode,

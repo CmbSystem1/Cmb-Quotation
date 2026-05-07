@@ -16,7 +16,7 @@ const ClientDetails = () => {
   const loadQuotations = async () => {
     try {
       const res = await axios.get(
-        "http://localhost:5000/api/client-quotations/" + id
+        "https://quotation-backend-9i3u.onrender.com/api/client-quotations/" + id
       );
       setQuotations(res.data || []);
     } catch (err) {
@@ -32,7 +32,7 @@ const ClientDetails = () => {
   const copyQuotation = async (quotationId) => {
     try {
       await axios.post(
-        "http://localhost:5000/api/quotation-copy/" + quotationId
+        "https://quotation-backend-9i3u.onrender.com/api/quotation-copy/" + quotationId
       );
 
       alert("Copied as new version!");
@@ -48,7 +48,7 @@ const ClientDetails = () => {
   try {
 
     const res = await axios.get(
-      "http://localhost:5000/api/quotation/" + quotationId
+      "https://quotation-backend-9i3u.onrender.com/api/quotation/" + quotationId
     );
 
     const q = res.data;
@@ -264,7 +264,7 @@ const ClientDetails = () => {
                   try {
 
                     await axios.delete(
-                      "http://localhost:5000/api/quotation/" + q.id
+                      "https://quotation-backend-9i3u.onrender.com/api/quotation/" + q.id
                     );
 
                     loadQuotations();

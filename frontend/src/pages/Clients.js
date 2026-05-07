@@ -20,7 +20,7 @@ const Clients = () => {
   });
 
   const fetchClients = async () => {
-    const res = await axios.get("http://localhost:5000/api/clients");
+    const res = await axios.get("https://quotation-backend-9i3u.onrender.com/api/clients");
     setClients(res.data);
   };
 
@@ -37,7 +37,7 @@ const Clients = () => {
     e.preventDefault();
 
     try {
-      await axios.post("http://localhost:5000/api/clients", form);
+      await axios.post("https://quotation-backend-9i3u.onrender.com/api/clients", form);
 
       setForm({ name: "", phone: "", address: "", gst: "" });
       fetchClients();
@@ -55,7 +55,7 @@ const Clients = () => {
 
   const saveEdit = async () => {
     await axios.put(
-      `http://localhost:5000/api/clients/${editId}`,
+      `https://quotation-backend-9i3u.onrender.com/api/clients/${editId}`,
       form
     );
 
@@ -69,7 +69,7 @@ const Clients = () => {
     if (!window.confirm("Delete this client?")) return;
 
     try {
-      await axios.delete(`http://localhost:5000/api/clients/${id}`);
+      await axios.delete(`https://quotation-backend-9i3u.onrender.com/api/clients/${id}`);
       fetchClients();
     } catch (err) {
       alert(err.response?.data?.message);
