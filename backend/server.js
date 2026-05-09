@@ -1,10 +1,14 @@
 const express = require("express");
 const cors = require("cors");
-const sqlite3 = require("sqlite3").verbose();
+const supabase = require("./supabase");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 require("dotenv").config();
+
+const cloudinary = require("./cloudinary");
+const { CloudinaryStorage } =
+  require("multer-storage-cloudinary");
 
 const axios = require("axios");
 const XLSX = require("xlsx");
@@ -21,66 +25,19 @@ app.use(cors({
 
 app.use(express.json({ limit: "20mb" }));
 
-// 🔥 VERY IMPORTANT (serve images correctly)
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
-
-// ================= UPLOAD =================
-const storage = multer.diskStorage({
-  destination: "uploads/",
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
-  },
+// ================= Cloudinary =================
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: async (req, file) => ({
+    folder: "quotation-products",
+    allowed_formats: ["jpg", "png", "jpeg", "webp"],
+  }),
 });
 
 const upload = multer({ storage });
 
 // ================= DATABASE =================
-const db = new sqlite3.Database("./database.db");
 
-db.serialize(() => {
-
-  db.run(`CREATE TABLE IF NOT EXISTS clients (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    phone TEXT,
-    email TEXT,
-    address TEXT,
-    gst TEXT
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS quotations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    clientId INTEGER,
-    total REAL,
-    pf REAL DEFAULT 0,
-    gst REAL DEFAULT 0,
-    createdAt TEXT,
-    version INTEGER DEFAULT 1,
-    parentId INTEGER
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS quotation_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    quotationId INTEGER,
-    productCode TEXT,
-    brand TEXT,
-    description TEXT,
-    qty INTEGER,
-    discount REAL,
-    netRate REAL,
-    total REAL,
-    image TEXT,
-    section TEXT,
-    subsection TEXT
-  )`);
-
-  db.run(`CREATE TABLE IF NOT EXISTS product_images (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    productCode TEXT,
-    brand TEXT,
-    image TEXT
-  )`);
-});
 
 // ================= EXCEL =================
 let excelData = [];
@@ -106,13 +63,12 @@ async function loadExcel() {
 }
 
 // ================= SEARCH EXCEL PRODUCT =================
-app.get("/api/excel-product", (req, res) => {
+app.get("/api/excel-product", async (req, res) => {
 
   try {
 
     const { productCode, brand } = req.query;
 
-    // ================= VALIDATION =================
     if (!productCode || !brand) {
 
       return res.status(400).send({
@@ -121,7 +77,6 @@ app.get("/api/excel-product", (req, res) => {
 
     }
 
-    // ================= CLEAN INPUT =================
     const cleanCode =
       String(productCode)
         .trim()
@@ -131,10 +86,6 @@ app.get("/api/excel-product", (req, res) => {
       String(brand)
         .trim()
         .toUpperCase();
-
-    console.log("SEARCHING PRODUCT:");
-    console.log("CODE:", cleanCode);
-    console.log("BRAND:", cleanBrand);
 
     // ================= FIND PRODUCT =================
     const product = excelData.find((p) => {
@@ -156,10 +107,7 @@ app.get("/api/excel-product", (req, res) => {
 
     });
 
-    // ================= NOT FOUND =================
     if (!product) {
-
-      console.log("PRODUCT NOT FOUND");
 
       return res.status(404).send({
         message: "No product found"
@@ -168,41 +116,29 @@ app.get("/api/excel-product", (req, res) => {
     }
 
     // ================= FIND IMAGE =================
-    db.get(
-      `
-      SELECT image
-      FROM product_images
-      WHERE
-        UPPER(TRIM(productCode)) = ?
-        AND
-        UPPER(TRIM(brand)) = ?
-      ORDER BY id DESC
-      LIMIT 1
-      `,
-      [cleanCode, cleanBrand],
-      (err, imageRow) => {
+    const { data: imageData, error } =
+      await supabase
+        .from("product_images")
+        .select("*")
+        .eq("productCode", cleanCode)
+        .eq("brand", cleanBrand)
+        .order("id", { ascending: false })
+        .limit(1);
 
-        if (err) {
-          console.log("IMAGE ERROR:", err);
-        }
+    if (error) {
+      console.log(error);
+    }
 
-        // ================= FINAL RESPONSE =================
-        res.send({
+    const imageRow = imageData?.[0];
 
-          ...product,
-
-          image: imageRow?.image
-            ? `http://localhost:5000${imageRow.image}`
-            : ""
-
-        });
-
-      }
-    );
+    res.send({
+      ...product,
+      image: imageRow?.image || ""
+    });
 
   } catch (err) {
 
-    console.log("PRODUCT SEARCH ERROR:", err);
+    console.log(err);
 
     res.status(500).send({
       message: "Server error"
@@ -214,99 +150,150 @@ app.get("/api/excel-product", (req, res) => {
 // ================= CLIENT =================
 
 // GET CLIENTS
-app.get("/api/clients", (req, res) => {
-  db.all("SELECT * FROM clients", [], (err, rows) => {
-    if (err) return res.status(500).send(err);
-    res.send(rows);
-  });
+app.get("/api/clients", async (req, res) => {
+
+  const { data, error } =
+    await supabase
+      .from("clients")
+      .select("*")
+      .order("id", { ascending: false });
+
+  if (error) {
+    return res.status(500).send(error);
+  }
+
+  res.send(data);
+
 });
 
 // CREATE CLIENT (FIXED DUPLICATE ISSUE)
-app.post("/api/clients", (req, res) => {
-  const { name, phone, email, address, gst } = req.body;
+app.post("/api/clients", async (req, res) => {
 
-  db.get("SELECT * FROM clients WHERE name=?", [name], (err, row) => {
-    if (row) {
-      return res.status(400).send({ message: "Client already exists" });
-    }
+  const {
+    name,
+    phone,
+    email,
+    address,
+    gst
+  } = req.body;
 
-    db.run(
-      `INSERT INTO clients (name, phone, email, address, gst)
-       VALUES (?, ?, ?, ?, ?)`,
-      [name, phone, email, address, gst],
-      function (err) {
-        if (err) return res.status(500).send(err);
-        res.send({ id: this.lastID });
-      }
-    );
-  });
+  const { data: existing } =
+    await supabase
+      .from("clients")
+      .select("*")
+      .eq("name", name)
+      .maybeSingle();
+
+  if (existing) {
+
+    return res.status(400).send({
+      message: "Client already exists"
+    });
+
+  }
+
+  const { data, error } =
+    await supabase
+      .from("clients")
+      .insert([
+        {
+          name,
+          phone,
+          email,
+          address,
+          gst
+        }
+      ])
+      .select();
+
+  if (error) {
+    return res.status(500).send(error);
+  }
+
+  res.send(data[0]);
+
 });
 
 // UPDATE CLIENT
-app.put("/api/clients/:id", (req, res) => {
-  const { name, phone, address, gst } = req.body;
+app.put("/api/clients/:id", async (req, res) => {
 
-  db.run(
-    `UPDATE clients SET name=?, phone=?, address=?, gst=? WHERE id=?`,
-    [name, phone, address, gst, req.params.id],
-    function (err) {
-      if (err) return res.status(500).send(err);
-      res.send({ message: "Updated" });
-    }
-  );
+  const {
+    name,
+    phone,
+    address,
+    gst
+  } = req.body;
+
+  const { error } =
+    await supabase
+      .from("clients")
+      .update({
+        name,
+        phone,
+        address,
+        gst
+      })
+      .eq("id", req.params.id);
+
+  if (error) {
+    return res.status(500).send(error);
+  }
+
+  res.send({
+    message: "Updated"
+  });
+
 });
 
 // DELETE CLIENT
-app.delete("/api/clients/:id", (req, res) => {
-  const clientId = req.params.id;
+app.delete("/api/clients/:id", async (req, res) => {
 
-  // 1. Get all quotations of this client
-  db.all(
-    "SELECT id FROM quotations WHERE clientId=?",
-    [clientId],
-    (err, rows) => {
-      if (err) return res.status(500).send(err);
+  try {
 
-      const quotationIds = rows.map(q => q.id);
+    const clientid = req.params.id;
 
-      // 2. Delete quotation items
-      if (quotationIds.length > 0) {
-        const ids = quotationIds.join(",");
+    const { data: quotations } =
+      await supabase
+        .from("quotations")
+        .select("id")
+        .eq("clientid",clientid);
 
-        db.run(
-          `DELETE FROM quotation_items WHERE quotationId IN (${ids})`,
-          () => {
+    const quotationIds =
+      quotations?.map(q => q.id) || [];
 
-            // 3. Delete quotations
-            db.run(
-              `DELETE FROM quotations WHERE clientId=?`,
-              [clientId],
-              () => {
+    if (quotationIds.length > 0) {
 
-                // 4. Delete client
-                db.run(
-                  "DELETE FROM clients WHERE id=?",
-                  [clientId],
-                  function () {
-                    res.send({ message: "Client and all quotations deleted" });
-                  }
-                );
-              }
-            );
-          }
-        );
-      } else {
-        // No quotations → delete directly
-        db.run(
-          "DELETE FROM clients WHERE id=?",
-          [clientId],
-          function () {
-            res.send({ message: "Client deleted" });
-          }
-        );
-      }
+      await supabase
+        .from("quotation_items")
+        .delete()
+        .in("quotationId", quotationIds);
+
     }
-  );
+
+    await supabase
+      .from("quotations")
+      .delete()
+      .eq("clientid",clientid);
+
+    await supabase
+      .from("clients")
+      .delete()
+      .eq("id", clientid);
+
+    res.send({
+      message: "Client deleted"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Delete failed"
+    });
+
+  }
+
 });
 // ================= PRODUCTS =================
 app.get("/api/all-products", (req, res) => {
@@ -316,492 +303,615 @@ app.get("/api/all-products", (req, res) => {
 // ================= IMAGE =================
 
 // UPLOAD IMAGE
-app.post("/api/upload-image", upload.single("image"), (req, res) => {
-  const filePath = `/uploads/${req.file.filename}`;
-  const { productCode, brand } = req.body;
+app.post(
+  "/api/upload-image",
+  upload.single("image"),
+  async (req, res) => {
 
-  db.run(
-    `INSERT INTO product_images (productCode, brand, image)
-     VALUES (?, ?, ?)`,
-    [productCode, brand, filePath],
-    () => res.send({ image: filePath })
-  );
-});
+    try {
+
+      const imageUrl = req.file.path;
+
+      const { productCode, brand } = req.body;
+
+      const { error } = await supabase
+        .from("product_images")
+        .insert([
+          {
+            productcode: productCode,
+            brand: brand,
+            image: imageUrl
+          }
+        ]);
+
+      if (error) {
+        console.log(error);
+        return res.status(500).send(error);
+      }
+
+      res.send({
+        image: imageUrl
+      });
+
+    } catch (err) {
+
+      console.log(err);
+
+      res.status(500).send({
+        message: "Upload failed"
+      });
+
+    }
+
+  }
+);
 
 // GET IMAGE
-app.get("/api/get-image", (req, res) => {
-  const { productCode, brand } = req.query;
+app.get("/api/get-image", async (req, res) => {
 
-  db.get(
-    `SELECT image FROM product_images
-     WHERE productCode=? AND brand=?
-     ORDER BY id DESC LIMIT 1`,
-    [productCode, brand],
-    (err, row) => {
-      if (row) {
-        // 🔥 return FULL URL (IMPORTANT FOR EXCEL)
-        res.send({
-          image: `http://localhost:5000${row.image}`
-        });
-      } else {
-        res.send({});
-      }
+  try {
+
+    const { productCode,brand}= req.query;
+
+    const { data, error } = await supabase
+      .from("product_images")
+      .select("*")
+      .eq("productcode", cleanCode)
+      .eq("brand", brand)
+      .order("id", { ascending: false })
+      .limit(1);
+
+    if (error) {
+      return res.status(500).send(error);
     }
-  );
+
+    if (!data || data.length === 0) {
+      return res.send({});
+    }
+
+    res.send({
+      image: data[0].image
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Failed"
+    });
+
+  }
+
 });
 
 // ================= SAVE QUOTATION =================
-app.post("/api/quotations", (req, res) => {
-console.log("BODY RECEIVED:", req.body);
-  const { clientId, items, total, pf, gst } = req.body;
+app.post("/api/quotations", async (req, res) => {
 
-  db.run(
-    `INSERT INTO quotations (clientId, total, pf, gst, createdAt)
-     VALUES (?, ?, ?, ?, ?)`,
-    [clientId, total, pf || 0, gst || 0, new Date().toISOString()],
-    function (err) {
+  try {
 
-      if (err) {
-        console.log(err);
-        return res.status(500).send(err);
-      }
+    const {
+      clientid,
+      items,
+      total,
+      pf,
+      gst
+    } = req.body;
 
-      const qId = this.lastID;
+    // ================= CREATE QUOTATION =================
+    const {
+      data: quotationData,
+      error
+    } = await supabase
+      .from("quotations")
+      .insert([
+        {
+          clientid,
+          total,
+          pf: pf || 0,
+          gst: gst || 0,
+          createdAt: new Date().toISOString()
+        }
+      ])
+      .select();
 
-      items.forEach(item => {
+    if (error) {
 
-        db.run(
-          `INSERT INTO quotation_items
-          (
-            quotationId,
-            productCode,
-            brand,
-            description,
-            qty,
-            discount,
-            netRate,
-            total,
-            section,
-            subsection,
-            image
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            qId,
-            item.productCode,
-            item.brand,
-            item.description,
-            item.qty,
-            item.discount,
-            item.netRate,
-            item.total,
-            item.section,
-            item.subsection,
-            item.image || ""
-          ],
-          (err) => {
-            if (err) {
-              console.log("ITEM INSERT ERROR:", err);
-            }
-          }
-        );
+      console.log(error);
 
-      });
-
-      res.send({
-        message: "Saved",
-        quotationId: qId
-      });
+      return res.status(500).send(error);
 
     }
-  );
+
+    const qId = quotationData[0].id;
+
+    // ================= ITEMS =================
+    const itemsToInsert = items.map(item => ({
+
+      quotationid: qId,
+
+      productcode:item.productCode,
+
+      brand: item.brand,
+
+      description: item.description,
+
+      qty: item.qty,
+
+      discount: item.discount,
+
+      netRate: item.netRate,
+
+      total: item.total,
+
+      section: item.section,
+
+      subsection: item.subsection,
+
+      image: item.image || ""
+
+    }));
+
+    await supabase
+      .from("quotation_items")
+      .insert(itemsToInsert);
+
+    res.send({
+      message: "Saved",
+      quotationId: qId
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Save failed"
+    });
+
+  }
 
 });
+
 // ================= GET CLIENT QUOTATIONS =================
-app.get("/api/client-quotations/:id", (req, res) => {
-  const clientId = req.params.id;
+app.get("/api/client-quotations/:id", async (req, res) => {
 
-  db.all(
-    `SELECT * FROM quotations WHERE clientId=? ORDER BY createdAt DESC`,
-    [clientId],
-    (err, rows) => {
-      if (err) return res.status(500).send(err);
+  try {
 
-      res.send(rows);
+    const clientid= req.params.id;
+
+    const { data, error } =
+      await supabase
+        .from("quotations")
+        .select("*")
+        .eq("clientid",clientid)
+        .order("createdAt", {
+          ascending: false
+        });
+
+    if (error) {
+      return res.status(500).send(error);
     }
-  );
+
+    res.send(data);
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Load failed"
+    });
+
+  }
+
 });
 
 // ================= GET SINGLE QUOTATION =================
-app.get("/api/quotation/:id", (req, res) => {
-  const id = req.params.id;
+app.get("/api/quotation/:id", async (req, res) => {
 
-  db.get(
-    `SELECT * FROM quotations WHERE id=?`,
-    [id],
-    (err, quotation) => {
-      if (err) return res.status(500).send(err);
-      if (!quotation) return res.status(404).send({ message: "Not found" });
+  try {
 
-      db.all(
-        `SELECT * FROM quotation_items WHERE quotationId=?`,
-        [id],
-        (err, items) => {
-          if (err) return res.status(500).send(err);
+    const id = req.params.id;
 
-          res.send({
-            ...quotation,
-            items
-          });
-        }
-      );
+    // ================= QUOTATION =================
+    const {
+      data: quotation,
+      error: quotationError
+    } = await supabase
+      .from("quotations")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (quotationError || !quotation) {
+
+      return res.status(404).send({
+        message: "Quotation not found"
+      });
+
     }
-  );
+
+    // ================= ITEMS =================
+    const {
+      data: items,
+      error: itemsError
+    } = await supabase
+      .from("quotation_items")
+      .select("*")
+      .eq("quotationId", id);
+
+    if (itemsError) {
+
+      return res.status(500).send(itemsError);
+
+    }
+
+    res.send({
+      ...quotation,
+      items
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Load failed"
+    });
+
+  }
+
 });
 
 // COPY QUOTATION (NEW VERSION)
-app.post("/api/quotation-copy/:id", (req, res) => {
+app.post("/api/quotation-copy/:id", async (req, res) => {
 
-  const oldId = req.params.id;
+  try {
 
-  db.get(
-    "SELECT * FROM quotations WHERE id=?",
-    [oldId],
-    (err, q) => {
+    const oldId = req.params.id;
 
-      if (err) {
-        console.log("COPY FETCH ERROR:", err);
-        return res.status(500).send(err);
-      }
+    // ================= OLD QUOTATION =================
+    const {
+      data: oldQuotation,
+      error
+    } = await supabase
+      .from("quotations")
+      .select("*")
+      .eq("id", oldId)
+      .single();
 
-      if (!q) {
-        return res.status(404).send("Not found");
-      }
+    if (error || !oldQuotation) {
 
-      // ================= VERSION =================
-      const newVersion = (q.version || 1) + 1;
-
-      db.run(
-        `INSERT INTO quotations
-        (
-          clientId,
-          total,
-          pf,
-          gst,
-          createdAt,
-          version,
-          parentId
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          q.clientId,
-          q.total,
-          q.pf || 0,
-          q.gst || 0,
-          new Date().toISOString(),
-          newVersion,
-          oldId
-        ],
-        function (err) {
-
-          if (err) {
-            console.log("COPY INSERT ERROR:", err);
-            return res.status(500).send(err);
-          }
-
-          const newId = this.lastID;
-
-          db.all(
-            "SELECT * FROM quotation_items WHERE quotationId=?",
-            [oldId],
-            (err, items) => {
-
-              if (err) {
-                console.log("COPY ITEMS ERROR:", err);
-                return res.status(500).send(err);
-              }
-
-              items.forEach(item => {
-
-                db.run(
-                  `INSERT INTO quotation_items
-                  (
-                    quotationId,
-                    productCode,
-                    brand,
-                    description,
-                    qty,
-                    discount,
-                    netRate,
-                    total,
-                    section,
-                    subsection,
-                    image
-                  )
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                  [
-                    newId,
-                    item.productCode,
-                    item.brand,
-                    item.description,
-                    item.qty,
-                    item.discount,
-                    item.netRate,
-                    item.total,
-                    item.section,
-                    item.subsection,
-                    item.image || ""
-                  ]
-                );
-
-              });
-
-              res.send({
-                message: "Copied",
-                newId
-              });
-
-            }
-          );
-
-        }
-      );
+      return res.status(404).send({
+        message: "Quotation not found"
+      });
 
     }
-  );
+
+    // ================= NEW VERSION =================
+    const newVersion =
+      (oldQuotation.version || 1) + 1;
+
+    // ================= CREATE COPY =================
+    const {
+      data: newQuotation,
+      error: insertError
+    } = await supabase
+      .from("quotations")
+      .insert([
+        {
+          clientid:oldQuotation.clientid,
+          total: oldQuotation.total,
+          pf: oldQuotation.pf || 0,
+          gst: oldQuotation.gst || 0,
+          createdAt: new Date().toISOString(),
+          version: newVersion,
+          parentId: oldId
+        }
+      ])
+      .select();
+
+    if (insertError) {
+
+      return res.status(500).send(insertError);
+
+    }
+
+    const newId = newQuotation[0].id;
+
+    // ================= GET OLD ITEMS =================
+    const {
+      data: oldItems
+    } = await supabase
+      .from("quotation_items")
+      .select("*")
+      .eq("quotationId", oldId);
+
+    // ================= INSERT ITEMS =================
+    const copiedItems =
+      oldItems.map(item => ({
+
+        quotationId: newId,
+
+        productCode: item.productCode,
+
+        brand: item.brand,
+
+        description: item.description,
+
+        qty: item.qty,
+
+        discount: item.discount,
+
+        netRate: item.netRate,
+
+        total: item.total,
+
+        section: item.section,
+
+        subsection: item.subsection,
+
+        image: item.image || ""
+
+      }));
+
+    await supabase
+      .from("quotation_items")
+      .insert(copiedItems);
+
+    res.send({
+      message: "Copied",
+      newId
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Copy failed"
+    });
+
+  }
 
 });
 
 // ================= UPDATE QUOTATION =================
-app.put("/api/quotation/:id", (req, res) => {
+app.put("/api/quotation/:id", async (req, res) => {
 
-  const quotationId = req.params.id;
+  try {
 
-  const { clientId, items, total, pf, gst } = req.body;
+    const quotationId = req.params.id;
 
-  db.run(
-    `UPDATE quotations
-     SET clientId=?, total=?, pf=?, gst=?
-     WHERE id=?`,
-    [
-      clientId,
+    const {
+      clientid,
+      items,
       total,
-      pf || 0,
-      gst || 0,
-      quotationId
-    ],
-    function (err) {
+      pf,
+      gst
+    } = req.body;
 
-      if (err) {
-        return res.status(500).send(err);
-      }
+    // ================= UPDATE QUOTATION =================
+    const { error } =
+      await supabase
+        .from("quotations")
+        .update({
+          clientid,
+          total,
+          pf: pf || 0,
+          gst: gst || 0
+        })
+        .eq("id", quotationId);
 
-      db.run(
-        `DELETE FROM quotation_items
-         WHERE quotationId=?`,
-        [quotationId],
-        function (err) {
+    if (error) {
 
-          if (err) {
-            return res.status(500).send(err);
-          }
-
-          items.forEach(item => {
-
-            db.run(
-              `INSERT INTO quotation_items
-              (
-                quotationId,
-                productCode,
-                brand,
-                description,
-                qty,
-                discount,
-                netRate,
-                total,
-                image,
-                section,
-                subsection
-              )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                quotationId,
-                item.productCode,
-                item.brand,
-                item.description,
-                item.qty,
-                item.discount,
-                item.netRate,
-                item.total,
-                item.image || "",
-                item.section,
-                item.subsection
-              ]
-            );
-
-          });
-
-          res.send({
-            message: "Quotation updated"
-          });
-
-        }
-      );
+      return res.status(500).send(error);
 
     }
-  );
+
+    // ================= DELETE OLD ITEMS =================
+    await supabase
+      .from("quotation_items")
+      .delete()
+      .eq("quotationId", quotationId);
+
+    // ================= INSERT NEW ITEMS =================
+    const itemsToInsert =
+      items.map(item => ({
+
+        quotationId,
+
+        productCode: item.productCode,
+
+        brand: item.brand,
+
+        description: item.description,
+
+        qty: item.qty,
+
+        discount: item.discount,
+
+        netRate: item.netRate,
+
+        total: item.total,
+
+        image: item.image || "",
+
+        section: item.section,
+
+        subsection: item.subsection
+
+      }));
+
+    await supabase
+      .from("quotation_items")
+      .insert(itemsToInsert);
+
+    res.send({
+      message: "Quotation updated"
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Update failed"
+    });
+
+  }
 
 });
 
 // ================= CREATE REVISION =================
-app.post("/api/quotation-revision/:id", (req, res) => {
+app.post("/api/quotation-revision/:id", async (req, res) => {
 
-  const oldId = req.params.id;
+  try {
 
-  const {
-    clientId,
-    items,
-    total,
-    pf,
-    gst
-  } = req.body;
+    const oldId = req.params.id;
 
-  db.get(
-    "SELECT * FROM quotations WHERE id=?",
-    [oldId],
-    (err, oldQuotation) => {
+    const {
+      clientid,
+      items,
+      total,
+      pf,
+      gst
+    } = req.body;
 
-      if (err) {
-        console.log(err);
-        return res.status(500).send(err);
-      }
+    // ================= OLD QUOTATION =================
+    const {
+      data: oldQuotation,
+      error
+    } = await supabase
+      .from("quotations")
+      .select("*")
+      .eq("id", oldId)
+      .single();
 
-      if (!oldQuotation) {
-        return res.status(404).send({
-          message: "Quotation not found"
-        });
-      }
+    if (error || !oldQuotation) {
 
-      // ================= VERSION =================
-      const newVersion =
-        (oldQuotation.version || 1) + 1;
-
-      const parentId =
-        oldQuotation.parentId || oldQuotation.id;
-
-      // ================= INSERT NEW QUOTATION =================
-      db.run(
-        `INSERT INTO quotations
-        (
-          clientId,
-          total,
-          pf,
-          gst,
-          createdAt,
-          version,
-          parentId
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          clientId,
-          total,
-          pf || 0,
-          gst || 0,
-          new Date().toISOString(),
-          newVersion,
-          parentId
-        ],
-        function (err) {
-
-          if (err) {
-            console.log("REVISION INSERT ERROR:", err);
-            return res.status(500).send(err);
-          }
-
-          const newQuotationId =
-            this.lastID;
-
-          // ================= INSERT ITEMS =================
-          items.forEach(item => {
-
-            db.run(
-              `INSERT INTO quotation_items
-              (
-                quotationId,
-                productCode,
-                brand,
-                description,
-                qty,
-                discount,
-                netRate,
-                total,
-                image,
-                section,
-                subsection
-              )
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [
-                newQuotationId,
-                item.productCode,
-                item.brand,
-                item.description,
-                item.qty,
-                item.discount,
-                item.netRate,
-                item.total,
-                item.image || "",
-                item.section,
-                item.subsection
-              ]
-            );
-
-          });
-
-          res.send({
-            message: "Revision saved",
-            quotationId: newQuotationId
-          });
-
-        }
-      );
+      return res.status(404).send({
+        message: "Quotation not found"
+      });
 
     }
-  );
+
+    const newVersion =
+      (oldQuotation.version || 1) + 1;
+
+    const parentId =
+      oldQuotation.parentId || oldQuotation.id;
+
+    // ================= CREATE REVISION =================
+    const {
+      data: newQuotation,
+      error: insertError
+    } = await supabase
+      .from("quotations")
+      .insert([
+        {
+          clientid,
+          total,
+          pf: pf || 0,
+          gst: gst || 0,
+          createdAt: new Date().toISOString(),
+          version: newVersion,
+          parentId
+        }
+      ])
+      .select();
+
+    if (insertError) {
+
+      return res.status(500).send(insertError);
+
+    }
+
+    const newQuotationId =
+      newQuotation[0].id;
+
+    // ================= INSERT ITEMS =================
+    const itemsToInsert =
+      items.map(item => ({
+
+        quotationId: newQuotationId,
+
+        productCode: item.productCode,
+
+        brand: item.brand,
+
+        description: item.description,
+
+        qty: item.qty,
+
+        discount: item.discount,
+
+        netRate: item.netRate,
+
+        total: item.total,
+
+        image: item.image || "",
+
+        section: item.section,
+
+        subsection: item.subsection
+
+      }));
+
+    await supabase
+      .from("quotation_items")
+      .insert(itemsToInsert);
+
+    res.send({
+      message: "Revision saved",
+      quotationId: newQuotationId
+    });
+
+  } catch (err) {
+
+    console.log(err);
+
+    res.status(500).send({
+      message: "Revision failed"
+    });
+
+  }
 
 });
 
 // ================= DELETE QUOTATION =================
-app.delete("/api/quotation/:id", (req, res) => {
+app.delete("/api/quotation/:id", async (req, res) => {
 
-  const quotationId = req.params.id;
+  try {
 
-  db.run(
-    `DELETE FROM quotation_items WHERE quotationId=?`,
-    [quotationId],
-    function (err) {
+    const quotationId = req.params.id;
 
-      if (err) {
-        return res.status(500).send(err);
-      }
+    // ================= DELETE ITEMS =================
+    await supabase
+      .from("quotation_items")
+      .delete()
+      .eq("quotationId", quotationId);
 
-      db.run(
-        `DELETE FROM quotations WHERE id=?`,
-        [quotationId],
-        function (err) {
+    // ================= DELETE QUOTATION =================
+    await supabase
+      .from("quotations")
+      .delete()
+      .eq("id", quotationId);
 
-          if (err) {
-            return res.status(500).send(err);
-          }
+    res.send({
+      message: "Quotation deleted"
+    });
 
-          res.send({
-            message: "Quotation deleted"
-          });
+  } catch (err) {
 
-        }
-      );
+    console.log(err);
 
-    }
-  );
+    res.status(500).send({
+      message: "Delete failed"
+    });
+
+  }
 
 });
 
